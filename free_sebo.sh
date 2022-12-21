@@ -3,7 +3,7 @@
 sobe_hosts() { 
 	for ((I=0; I<${#HOSTS[@]}; I+=1)) 
 	do
-		nohup freechains-host --port=${HOSTS[$I]} start /tmp/simul/${USUARIOS[$resp]} > /dev/null &
+		nohup freechains-host --port=${HOSTS[$I]} start /tmp/p2p/${USUARIOS[$resp]} > /dev/null &
  		sleep 5
 	done
 }
@@ -25,6 +25,7 @@ gera_keys() {
 	KEYS=( $(freechains keys pubpvt "Está é a senha forte para o usuário ${USUARIOS[$resp]} " ) )
 	PUBKEY[$resp]=${KEYS[0]}
 	PRIKEY[$resp]=${KEYS[1]}
+	KY_BANCA=( $(freechains keys pubpvt "Está é a senha forte para o usuário ${USUARIOS[0]} " ) )
 	clear
 }
 
@@ -57,7 +58,6 @@ monta_cadeia() {
 	fi
 
 }
-
   
   
 recebe_atualizacao()  {
@@ -95,8 +95,57 @@ envia_atualizacao()  {
 
 posta_venda() {
         recebe_atualizacao
-	freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "${PUBKEY[$resp]} - Livro: $livro , Preco: $preco, PIX: $pix, retire na Banca:${PUBKEY[$resp]} - Endereco: Av Rio Branco 256 " --sign=${PRIKEY[$resp]}
+	freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "${PUBKEY[$resp]}-${KY_BANCA[0]}:Livro: $livro , Preco: $preco, PIX: $pix" --sign=${PRIKEY[$resp]}
         envia_atualizacao
+
+}
+
+admite_proposta_compra() {
+
+	echo " Verificando proposta de compra ..."
+	LIVROS=($(freechains chain '#free_sebo' heads blocked))
+	if [ ${#LIVROS[@]} = 0 ] 
+	then  # nada a fazer
+		LIVROS=($(freechains chain '#free_sebo' heads))
+		if [ ${#LIVROS[@]} = 0 ]
+		then
+			echo "Nao existe proposta de compra pendente. Tecle <ENTER> para continuar"
+			read
+			return
+		fi
+	fi	
+		for I in ${LIVROS[*]}
+		do
+			PAYLOAD=($(freechains chain '#free_sebo' get payload ${I}))
+			if [[ ${PUBKEY[$resp]} = "${PAYLOAD:0:64}" ]] && [[ ${PAYLOAD:130:7} = "Vendido" ]]
+			then	
+				freechains chain '#free_sebo' get payload ${I}
+				echo "Aceita esta compra? (S/N)"
+				read opcao
+				if [[ $opcao = "S" ]] || [[ $opcao = "s" ]]  
+				then
+	    				recebe_atualizacao
+					freechains chain '#free_sebo' like ${I} --sign=${PRIKEY[$resp]}
+					envia_atualizacao
+				else 
+					if [[ $opcao = "N" ]] || [[ $opcao = "n" ]]
+					then
+						echo "Realizou o estorno? (S/N)"
+						read op_dislike
+						if [[ $op_dislike = "S" ]] || [[ $op_dislike = "s" ]]
+						then
+							recebe_atualizacao
+							freechains chain '#free_sebo' dislike ${I} --sign=${PRIKEY[$resp]} --why='${PAYLOAD:0:129}:Estorno:${PAYLOAD:137:200}-PIX: $pagto'
+							envia_atualizacao
+						else
+							recebe_atualizacao
+							freechains chain '#free_sebo' dislike ${I} --sign=${PRIKEY[$resp]} --why='${PAYLOAD:0:129}:Cancelo:${PAYLOAD:137:200}-PIX: $pagto'
+							envia_atualizacao
+						fi														                               
+					fi
+				fi
+			fi
+		done
 
 }
 
@@ -106,36 +155,11 @@ proposta_venda(){
 	declare -a LIVROS # Array auxiliar de todos os livros cadastrados 
 	## Verificar se este vendedor tem Proposta de compra pendente
 	## Lista os blocos que estao aguardando serem admitidos na cadeia : Compras efetivadas
-	
-	echo " Verificando proposta de compra ..."
-	LIVROS=($(freechains chain '#free_sebo' heads))
-	if [ ${#LIVROS[@]} = 0 ]
-	then  # nada a fazer
-		echo "Nao existe proposta de compra pendente"
-		return
-	else
-		for I in ${LIVROS[*]}
-		do
-			PAYLOAD=($(freechains chain '#free_sebo' get payload ${I}))
-			if [ ${PUBKEY[$resp]} = "${PAYLOAD:0:64}" ]
-			then	
-				freechains chain '#free_sebo' get payload ${I}
-				echo "Aceita esta compra? (S/N)"
-				read opcao
-				if [[ $opcao = "S" ]] || [[ $opcao = "s" ]]  
-				then
-	    				freechains chain '#free_sebo' like ${I} --sign=${PRIKEY[$resp]} --why='$I vendido'
-					envia_atualizacao
-				else 
-					if [[ $opcao = "N" ]] || [[ $opcao = "n" ]]
-					then
-						freechains chain '#free_sebo' dislike ${I} --sign=${PRIKEY[$resp]} --why='$I este livro ja foi vendido, valor sera estornado em 24 horas'
-						envia_atualizacao
-					fi
-				fi
-			fi
-		done
+	if [[ $REPUTACAO > 0 ]]
+	then  
+	        admite_proposta_compra
 	fi
+	## Inclui nova proposta de venda
 	echo "Deseja incluir Livro? (S/N)"
 	read opcao
 	if [[ $opcao = "S" ]] || [[ $opcao = "s" ]]  
@@ -166,20 +190,32 @@ proposta_venda(){
 }
 
 lista_livros() {
-
-	for I in ${CADEIA[*]}
+	sistema=""
+	rm -f /tmp/livro.menu
+	touch /tmp/livro.menu
+	echo "#/bin/bash" >> /tmp/livro.menu
+	echo 'sistema=$(dialog --menu " Escolha o livro " 0 0 0 \' >> /tmp/livro.menu 
+	for I in ${CADEIA[*]} 
     	do   
-		freechains chain '#free_sebo' get payload ${I}
-	done
-
-	echo "Deseja comprar algum livro? (S/N)"
-	read op_livro
-	if [[ $op_compra = "S" ]] || [[ $op_compra = "s" ]]  
-	then
-		continue
-	else
-		exit
-	fi
+		L=${I:1:1}
+		if [[ $L = "_" ]]
+		then 
+			L=${I:0:1}
+		else
+			L=${I:0:2}
+		fi
+		LIVRO=$(freechains chain '#free_sebo' get payload ${I})
+		if [[ $LIVRO = "" ]] 
+		then
+			continue
+		else
+			echo ${I:0:5} '"' ${LIVRO:130:300} '" \'	>> /tmp/livro.menu
+		fi
+	done 
+	echo ' --stdout)' >> /tmp/livro.menu 
+	echo 'echo $sistema' >> /tmp/livro.menu
+	chmod ugo+x /tmp/livro.menu
+	resultado=$(/tmp/livro.menu)
 }
 
 proposta_compra() {
@@ -189,7 +225,7 @@ proposta_compra() {
 	## Busca reputacao
 	busca_reps
 	## Lendo a cadeia #free_sebo ##
-	echo " Buscando lista de livros para venda, aguarde ..."
+	echo " Buscando lista de livros, aguarde ..."
 	echo " "
 	echo " "
 	CADEIA=($(freechains --host=localhost:${HOSTS[$HOST]} chain '#free_sebo' consensus))
@@ -200,45 +236,18 @@ proposta_compra() {
 		return
 	else  
 		lista_livros
+                codigo=$resultado
 		for I in ${CADEIA[*]}
     		do   
 			PAYLOAD=$(freechains chain '#free_sebo' get payload ${I})
-			freechains chain '#free_sebo' get payload ${I}
-		        echo " " 
-			J=${I:0:1}
-			if [[ $J > 3 ]] 
+			J=${I:0:5}
+			if [[ "$codigo" = "$J" ]] 
 			then	
-				echo "Deseja comprar este livro? (S/N)"
-				read op_compra
-				if [[ $op_compra = "S" ]] || [[ $op_compra = "s" ]]  
-				then
-					codigo=${PAYLOAD:0:64}
-        				echo " Entre com dados da confirmacao do PIX:"
-					read pagto
-					#Confirmacao de compra
-					echo "Dados do livro : " $PAYLOAD
-					echo " Vendedor: " $codigo
-       					echo " Dados do pagamento - Codigo PIX:" $pagto	
-					echo "Confirma dados da compra? (S/N)"
-					read ok_compra
-					if [ $ok_compra = "S" ] || [ $ok_compra = "s" ]  
-					then  
-						recebe_atualizacao
-						freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "$PAYLOAD -  codigo pagamento:$pagto  -- Comprado" --sign=${PRIKEY[$resp]}
-        					envia_atualizacao
-					else
-						continue
-					fi	
-				else 
-					echo "Deseja continuar comprando? (S/N)"
-					read op_compra
-					if [[ $op_compra = "S" ]] || [[ $op_compra = "s" ]]  
-					then
-						continue
-					else
-						exit
-					fi
-				fi
+				pagto=$(dialog --inputbox "Digite comprovante do PIX" 0 0 --stdout)
+				clear
+				recebe_atualizacao
+				freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "${PAYLOAD:0:129}:Vendido $J:${PAYLOAD:137:200}-PIX: $pagto" --sign=${PRIKEY[$resp]}
+        			envia_atualizacao
 			fi	
 		done  
 	fi
@@ -257,44 +266,47 @@ admite_proposta_venda() {
 	else
 		for I in ${BLOCKEDS[*]}
 		do
-			freechains chain '#free_sebo' get payload ${I}
-			echo "Deseja validar proposta de venda? (S/N)"
-			read op_venda
-			if [[ $op_venda = "S" ]] || [[ $op_venda = "s" ]]  
-			then
-	    			freechains chain '#free_sebo' like ${I} --sign=${PRIKEY[$resp]} 
-				envia_atualizacao
-			else 
-				echo "Deseja comunicar estorno da proposta de compra? (S/N)"
+			PROPOSTA=$(freechains chain '#free_sebo' get payload ${I})
+			if [[ ${PROPOSTA:130:5} = "Livro" ]] 
+			then 
+				echo "$PROPOSTA"
+				echo "Deseja validar proposta de venda? (S/N)"
 				read op_venda
-				if [[ $op_venda = "S" ]] || [[ $op_venda = "s" ]]
+				if [[ $op_venda = "S" ]] || [[ $op_venda = "s" ]]  
 				then
+					freechains chain '#free_sebo' like ${I} --sign=${PRIKEY[$resp]} 
+					envia_atualizacao
+				else 
 					freechains chain '#free_sebo' dislike ${I} --sign=${PRIKEY[$resp]} 
 					envia_atualizacao
-				else
-					continue
+				fi
+			else
+				echo "$PROPOSTA"
+				echo "Deseja validar proposta de compra pendentes? (S/N)"
+                        	read op_valida
+			        if [[ $op_valida = "S" ]] || [[ $op_valida = "s" ]]
+				then
+					freechains chain '#free_sebo' like ${I} --sign=${PRIKEY[$resp]}
+					envia_atualizacao
 				fi
 			fi
-			continue
 		done
 	fi
 }
 
 banca() {
 	gera_keys
-	busca_reps
-	echo " Verificando a existencia de propostas de venda pendente de aceitacao pela Banca, aguarde um instante ..."
 	CADEIA=($(freechains --host=localhost:${HOSTS[$HOST]} chain '#free_sebo' consensus))
 	if [ ${#CADEIA[@]} = 0 ]
 	then  
 		# Criar cadeia (FREE_SEBO)
 		echo "Inicia criacao do Forum #free_sebo"
 		freechains chains join '#free_sebo' ${PUBKEY[0]}
-		freechains chain '#free_sebo' post inline "Seja bemvido(a) ao espaco destinado a compra e venda de livros usados" --sign=${PRIKEY[0]}
-		freechains chain '#free_sebo' post inline "As propostas de vendas serao submetidas a avaliacao do Forum e propostas de compra com recibo ao Vendedor. A retirada sera na banca indicada." --sign=${PRIKEY[0]}
-		freechains chain '#free_sebo' post inline "Banca: Rio Branco 256 -  chave: ${PUBKEY[$resp]}" --sign=${PRIKEY[0]}
+		freechains chain '#free_sebo' post inline "${PUBKEY[$resp]}-${KY_BANCA[0]}:Este espaco foi criado para venda e compra de livros usados." --sign=${PRIKEY[0]}
+		freechains chain '#free_sebo' post inline "${PUBKEY[$resp]}-${KY_BANCA[0]}:-Banca: Rio Branco 256 - Centro" --sign=${PRIKEY[0]}
 	else  
 		# Neste caso a cadeia ja foi criada e a Banca ira admitir Vendedores, verificasse a Reputacao da Banca
+		busca_reps
         	if [[ $REPUTACAO < 1 ]]
 	     	then  # nada a fazer
    			return
@@ -307,19 +319,17 @@ banca() {
 
 
 monta_menu() {
-	dialog --title 'FreeChains - Users' --default-item '0' --menu ''   0 0 0\
+SYSTEM=$(dialog --title 'FreeChains - Users' --default-item '0' --menu ''   0 0 0\
 		0 ${USUARIOS[0]} \
 	        1 ${USUARIOS[1]} \
 	        2 ${USUARIOS[2]} \
 		3 ${USUARIOS[3]} \
-		4 ${USUARIOS[4]} 2>$TEMP
+		4 ${USUARIOS[4]} --stdout)      
 
-	resp=$(cat $TEMP)
-	[[ -e $resp ]] && resp="4"
+	resp=$SYSTEM
 }
 
 saia() {
-	echo "$resp"
 	exit
 }
 
@@ -355,9 +365,8 @@ case $resp in
      4) proposta_compra;;
      9) saia
 esac	
-echo "$resp"
-parar_hosts
 clear
+parar_hosts
 exit
 
 
