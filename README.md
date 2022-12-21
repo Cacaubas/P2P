@@ -17,7 +17,7 @@ O vendedor faz o aceite na cadeia, e caso não aceite, porque nao reconhece o pa
   ~$ > freechains-host --port=${HOSTS[$I]} start /tmp/simul/${USUARIOS[$resp]}
 
 2.	Após carregar os hosts é montado o menu principal com os perfis de usuários, através da função monta_menu()
-O menu é montado através de uma instrução Dialog, que carrega a lista de três perfis de usuários (Banca, Vendedor1, Vendedor2,  Comprador1 
+O menu é montado através de uma instrução Dialog, que carrega a lista de cinco usuários (Banca, Vendedor1, Vendedor2,  Comprador1 
 e Comprador2), associados ao array USUARIOS.
 
 3.  Esta aplicação tem três funções que atende aos cinco perfis citados.
@@ -41,42 +41,46 @@ e Comprador2), associados ao array USUARIOS.
   Obs .: A informação da Banca é preenchida automaticamente com a chave pública da banca.
 
   Após o preenchimento destes campos é feita a chamada da função posta_venda(), que guarda no bloco as seguintes informações, no comando freechains:
-  A chave pública do vendedor, o nome do livro, valor de venda e código pix a ser utilizado no deposito, ainda a chave pública da banca e endereço.
+  A chave pública do vendedor e da banca, o nome do livro, valor de venda e código pix a ser utilizado no deposito.
 
-    ~$ > freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "${PUBKEY[$resp]} - Livro: $livro , Preco: $preco, PIX: $pix, retire
-    na Banca:${PUBKEY[$resp]} - Endereco: Av Rio Branco 256 " --sign=${PRIKEY[$resp]}
+    ~$ >  freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "${PUBKEY[$resp]}-${KY_BANCA[0]}:Livro: $livro , Preco: $preco, 
+    PIX: $pix" --sign=${PRIKEY[$resp]}
 
   Antes da postagem é realizada a chamada a função recebe_atualizacao() para que este host receba as atualizações dos demais hosts, e após as postagens 
   chama a função envia_atualizacao() para que os demais hosts sejam notificados das atualizações do host do Vendedor.
 
-  Na função proposta_venda() também realizado o aceite das propostas de compra, através de likes e dislikes. Nesta função são carregadas as propostas 
+  Na função proposta_venda() também é realizado o aceite das propostas de compra, através de likes e dislikes. Nesta função são carregadas as propostas 
   para o Vendedor organizadas pela busca dos blocos iniciados pela chave publica do Vendedor.
 
-  c.	A opção Comprador é a que realiza a compra dos livros, através das funções proposta_compra() e lista_livros() . 
-  Nas primeiras compras, este usuário não possui reputação suficiente e suas solicitações depende da reputação do Vendedor para serem incluídas e 
+  c.	A opção Comprador é a que realiza a compra dos livros, através das funções proposta_compra() e lista_livros(). 
+  Nesta função foi implementado carregamento de menu atrves de comando shell script Dialog. 
+  Nas primeiras compras, este usuário não possui reputação suficiente e suas solicitações depende da reputação do Vendedor ou da banca para serem incluídas e 
   aceitas na cadeia free_sebo. 
 
   Assim que a função proposta_compra() e chamada ela chama a função lista_livros() que exibe para o comprador a lista de livros disponíveis. 
-  (Segue comentários no paragrafo sobre propostas de melhorias)
-
+  
   Na função proposta_compra() são incluídas as informações abaixo conforme indicado no comando freechains:
 
-  ~$ > freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "$codigo - Compra :$PAYLOAD -  codigo pagamento:$pagto" --
-  sign=${PRIKEY[$resp]}
+  ~$ > freechains --host=localhost:${HOSTS[$resp]} chain '#free_sebo' post inline "${PAYLOAD:0:129}:Vendido:${PAYLOAD:137:200}-PIX: $pagto"
+  --sign=${PRIKEY[$resp]}
 
   A variável PAYLOAD é usada para leitura dos dados armazenados nos blocos.
   Antes da postagem é realizada a chamada a função recebe_atualizacao() para que este host receba as atualizações dos demais hosts e após as postagens 
   a chamada a função envia_atualizacao() para que os demais hosts sejam notificados das atualizações do host deste Comprador.
 
-  A cada fechamento de perfil é finalização da aplicação e derrubado a conexão dos hosts através da função parar_hosts().
+  A cada fechamento de perfil é finalizada a aplicação e derrubado a conexão dos hosts através da função parar_hosts().
 
 <b>III.	Propostas de melhorias </b>
 
 1.	Não foi implementada rotina para inclusão de outras bancas.
-2.	Não foi realizado o tratamento dos conteúdos dos blocos para filtrar os livros já comprados, não exibindo na lista para os futuros compradores. Para minimizar esta falta, o conteúdo dos blocos indica compra e o código do pagamento, como indicativo de livro comprado.
+2.	Não foi realizado o tratamento dos conteúdos dos blocos para filtrar os livros já comprados, não exibindo na lista para os futuros compradores.
+Para minimizar esta falta, o conteúdo dos blocos indica Livro, para exemplares disponiveis e o Vendido e código do pagamento, como indicativo de 
+livro comprado.
+3. Desenvolvimento de menus para os perfis Vendedor e Banca, conforme feito para Comprador.
+4. Desenvolvimento da aplicacao em uma linguagem de programação mais amigável.
 
 <b>IV.	Ferramentas utilizadas</b>
 
-Foi utilizado os comandos via Shell script e editor de linha vi Linux, conforme script <b>free_sebo.sh</b>
+Foi utilizado os comandos via Shell script, com menus Dialog, e editor de linha vi Linux, conforme script <b>free_sebo.sh</b>
 
 
